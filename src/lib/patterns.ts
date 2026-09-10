@@ -83,6 +83,12 @@ export const PATTERNS: Pattern[] = [
     rows: ["......#.", "##......", ".#...###"],
   },
   {
+    name: "B358 spaceship",
+    rule: "B358/S126",
+    note: "Six cells that travel 2 cells straight every 6 generations. Found by an exhaustive search over every pattern in a 4x4 box, under a rule found by searching the rule space in Task 3.",
+    rows: ["#..#", ".##.", "##.."],
+  },
+  {
     name: "Replicator",
     rule: "B36/S23",
     note: "HighLife only. Every 12 generations it becomes two copies of itself, so the copy count follows Pascal's triangle mod 2 and draws a Sierpinski triangle.",
@@ -109,6 +115,11 @@ export const RULE_PRESETS: RulePreset[] = [
   { name: "Anneal", rule: "B4678/S35678", note: "Majority-like voting rule. Domains coarsen over time." },
   { name: "34 Life", rule: "B34/S34", note: "Active and chaotic, full of small oscillators." },
   { name: "Replicator", rule: "B1357/S1357", note: "Every pattern replicates itself fractally." },
+  {
+    name: "Sparse (searched)",
+    rule: "B358/S126",
+    note: "Found by searching the rule space in Task 3. Settles near 2% full from any starting density, and has a 6-cell spaceship.",
+  },
 ];
 
 /** Stamps `pattern` into `grid` with its top-left corner at (x, y). */

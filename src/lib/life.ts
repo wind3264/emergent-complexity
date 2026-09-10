@@ -155,6 +155,38 @@ export function stepInto(src: Grid, dst: Grid, rule: Rule, wrap: boolean): numbe
   return pop;
 }
 
+/**
+ * Flips every cell independently with probability `p` and returns the indices of
+ * the cells that flipped, in ascending order.
+ *
+ * Rather than draw a random number per cell, the gap to the next flipped cell is
+ * drawn directly from the geometric distribution that governs it, so the cost is
+ * proportional to the number of flips rather than to the size of the board. That
+ * matters because the interesting noise rates are small: at p = 0.001 a 400x260
+ * board flips about a hundred cells, not a hundred thousand.
+ */
+export function applyNoise(grid: Grid, p: number, rng: () => number = Math.random): number[] {
+  const flipped: number[] = [];
+  const { cells } = grid;
+  if (p <= 0) return flipped;
+  if (p >= 1) {
+    for (let i = 0; i < cells.length; i++) {
+      cells[i] ^= 1;
+      flipped.push(i);
+    }
+    return flipped;
+  }
+
+  const logQ = Math.log(1 - p);
+  let i = -1;
+  for (;;) {
+    i += 1 + Math.floor(Math.log(1 - rng()) / logQ);
+    if (i >= cells.length) return flipped;
+    cells[i] ^= 1;
+    flipped.push(i);
+  }
+}
+
 /** Convenience wrapper that allocates a fresh grid. Used by tests and one-off calls. */
 export function step(src: Grid, rule: Rule, wrap: boolean): Grid {
   const dst = createGrid(src.width, src.height);

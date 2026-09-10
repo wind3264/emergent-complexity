@@ -113,6 +113,15 @@ describe("catalogued patterns behave as described", () => {
     expect(Math.abs(after.x - before.x)).toBe(2);
   });
 
+  it("b358 spaceship travels 2 cells straight every 6 generations", () => {
+    const start = boardWith(byName("B358 spaceship"));
+    const before = shape(start);
+    const after = shape(run(start, "B358/S126", 6));
+    expect(sameShape(before, after)).toBe(true);
+    expect(after.x - before.x).toBe(0);
+    expect(Math.abs(after.y - before.y)).toBe(2);
+  });
+
   it("blinker has period 2", () => {
     const start = boardWith(byName("Blinker"));
     const before = shape(start);

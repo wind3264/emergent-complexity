@@ -5,3 +5,8 @@ next-env.d.ts
 *.tsbuildinfo
 .DS_Store
 .env*.local
+
+# LaTeX build artifacts
+report/*.aux
+report/*.log
+report/*.out

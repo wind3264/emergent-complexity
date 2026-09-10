@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Grid,
   Rule,
+  applyNoise,
   clearGrid,
   createGrid,
   hashGrid,
@@ -31,6 +32,12 @@ const DEFAULT_SIZE = 2;
 const SPEEDS = [1, 2, 3, 5, 8, 12, 20, 30, 45, 60, 120];
 const DEFAULT_SPEED = 6;
 
+/**
+ * Per-cell, per-generation probability that a cell is flipped. Spaced roughly
+ * logarithmically because the interesting behaviour spans several decades.
+ */
+const NOISE_RATES = [0, 0.00001, 0.00002, 0.00005, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05];
+
 const MAX_STEPS_PER_FRAME = 12;
 const HISTORY_LIMIT = 600;
 /** Longest oscillation period the cycle detector can name. */
@@ -40,6 +47,16 @@ const COLOR_BG = "#05070b";
 const COLOR_LINE = "#141b28";
 const COLOR_ALIVE = "#5eead4";
 const COLOR_BORN = "#f0fdfa";
+const COLOR_NOISE = "#fbbf24";
+
+/** "0.05%" rather than "0.05000000000000001%". */
+function formatRate(p: number): string {
+  return p === 0 ? "off" : `${Number((p * 100).toPrecision(2))}%`;
+}
+
+function formatCount(n: number): string {
+  return n < 10 ? n.toFixed(1) : Math.round(n).toLocaleString();
+}
 
 export default function LifeLab() {
   const [sizeIndex, setSizeIndex] = useState(DEFAULT_SIZE);
@@ -49,9 +66,10 @@ export default function LifeLab() {
   const [running, setRunning] = useState(false);
   const [speedIndex, setSpeedIndex] = useState(DEFAULT_SPEED);
   const [density, setDensity] = useState(0.3);
+  const [noiseIndex, setNoiseIndex] = useState(0);
   const [wrap, setWrap] = useState(true);
   const [pattern, setPattern] = useState<Pattern | null>(null);
-  const [stats, setStats] = useState({ generation: 0, population: 0, verdict: "" });
+  const [stats, setStats] = useState({ generation: 0, population: 0, verdict: "", flips: 0 });
   const [hasSeed, setHasSeed] = useState(false);
 
   // Grids live in refs: the animation loop mutates them without re-rendering React.
@@ -64,12 +82,14 @@ export default function LifeLab() {
   const historyRef = useRef<number[]>([]);
   const cyclesRef = useRef<{ hash: string; gen: number }[]>([]);
   const verdictRef = useRef("");
+  const flipsRef = useRef<number[]>([]);
 
   // Mirrors of React state that the animation loop reads every frame.
   const ruleRef = useRef(rule);
   const runningRef = useRef(running);
   const speedRef = useRef(SPEEDS[speedIndex]);
   const wrapRef = useRef(wrap);
+  const noiseRef = useRef(NOISE_RATES[noiseIndex]);
   const patternRef = useRef(pattern);
 
   const boardRef = useRef<HTMLDivElement>(null);
@@ -96,12 +116,23 @@ export default function LifeLab() {
     wrapRef.current = wrap;
   }, [wrap]);
   useEffect(() => {
+    noiseRef.current = NOISE_RATES[noiseIndex];
+    // A cycle found before the noise was turned on says nothing about now.
+    cyclesRef.current = [];
+    verdictRef.current = "";
+  }, [noiseIndex]);
+  useEffect(() => {
     patternRef.current = pattern;
   }, [pattern]);
 
   /** Pushes the simulation counters into React state so the footer updates. */
   const publishStats = useCallback(() => {
-    setStats({ generation: genRef.current, population: popRef.current, verdict: verdictRef.current });
+    setStats({
+      generation: genRef.current,
+      population: popRef.current,
+      verdict: verdictRef.current,
+      flips: flipsRef.current.length,
+    });
   }, []);
 
   const drawChart = useCallback(() => {
@@ -192,6 +223,16 @@ export default function LifeLab() {
         }
       }
     }
+
+    // Cells the noise turned on are repainted on top, so a perturbation can be
+    // told apart from a birth the rule produced.
+    if (flipsRef.current.length) {
+      ctx.fillStyle = COLOR_NOISE;
+      for (const i of flipsRef.current) {
+        if (!cells[i]) continue;
+        ctx.fillRect((i % grid.width) * cell, Math.floor(i / grid.width) * cell, size, size);
+      }
+    }
   }, []);
 
   /** Clears run history. Called whenever the board is edited or re-seeded. */
@@ -201,6 +242,7 @@ export default function LifeLab() {
     historyRef.current = [population];
     cyclesRef.current = [];
     verdictRef.current = "";
+    flipsRef.current = [];
     seedRef.current = null;
     prevValidRef.current = false;
     setHasSeed(false);
@@ -226,14 +268,33 @@ export default function LifeLab() {
     prevValidRef.current = true;
     genRef.current += 1;
 
+    const noise = noiseRef.current;
+    if (noise > 0) {
+      const flipped = applyNoise(back, noise);
+      for (const i of flipped) popRef.current += back.cells[i] ? 1 : -1;
+      flipsRef.current = flipped;
+    } else if (flipsRef.current.length) {
+      flipsRef.current = [];
+    }
+
     const history = historyRef.current;
     history.push(popRef.current);
     if (history.length > HISTORY_LIMIT) history.shift();
 
     if (popRef.current === 0) {
       verdictRef.current = "extinct";
-      runningRef.current = false;
-      setRunning(false);
+      // Under noise an empty board is temporary: the next step reseeds it.
+      if (noise === 0) {
+        runningRef.current = false;
+        setRunning(false);
+      }
+      return;
+    }
+
+    // A repeated board means a cycle only when the rule is the only thing
+    // changing the board, so the detector is switched off while noise is on.
+    if (noise > 0) {
+      verdictRef.current = "perturbed";
       return;
     }
 
@@ -367,6 +428,20 @@ export default function LifeLab() {
     drawChart();
   }, [draw, drawChart, publishStats, resetRun]);
 
+  /** Flips one random cell, so a single perturbation can be followed by eye. */
+  const doPerturb = useCallback(() => {
+    const grid = gridRef.current!;
+    const index = Math.floor(Math.random() * grid.cells.length);
+    grid.cells[index] ^= 1;
+    flipsRef.current = [index];
+    popRef.current = populationOf(grid);
+    cyclesRef.current = [];
+    verdictRef.current = "perturbed";
+    prevValidRef.current = false;
+    draw();
+    publishStats();
+  }, [draw, publishStats]);
+
   /**
    * Records a hand edit. The generation counter keeps running, but the cycle
    * detector and the birth highlight are invalidated because the board changed
@@ -499,6 +574,7 @@ export default function LifeLab() {
 
   const total = cols * rows;
   const ruleName = ruleToString(rule);
+  const noiseRate = NOISE_RATES[noiseIndex];
 
   return (
     <div className="app">
@@ -537,6 +613,11 @@ export default function LifeLab() {
             {stats.verdict && (
               <span className="stat">
                 state <b className="verdict">{stats.verdict}</b>
+              </span>
+            )}
+            {noiseIndex > 0 && (
+              <span className="stat">
+                flipped <b>{stats.flips}</b>
               </span>
             )}
             <canvas className="chart" ref={chartRef} title="Population over the last 600 generations" />
@@ -609,6 +690,39 @@ export default function LifeLab() {
           </div>
 
           <RuleEditor rule={rule} onChange={setRule} />
+
+          <div className="panel">
+            <h2>Noise</h2>
+            <div className="row" style={{ display: "block" }}>
+              <label className="field" htmlFor="noise">
+                Flip probability <b>{formatRate(noiseRate)}</b> per cell per step
+              </label>
+              <input
+                id="noise"
+                type="range"
+                min={0}
+                max={NOISE_RATES.length - 1}
+                step={1}
+                value={noiseIndex}
+                onChange={(e) => setNoiseIndex(Number(e.target.value))}
+              />
+            </div>
+            <p className="hint">
+              {noiseRate === 0
+                ? "The rule is the only thing changing the board."
+                : `About ${formatCount(noiseRate * total)} of the ${total.toLocaleString()} cells are flipped each generation, on or off, independently of the rule.`}
+            </p>
+            <div className="row">
+              <button className="btn wide" onClick={doPerturb}>
+                Flip one cell
+              </button>
+            </div>
+            <div className="legend" style={{ marginTop: 11 }}>
+              <span>
+                <i style={{ background: COLOR_NOISE }} /> flipped by noise
+              </span>
+            </div>
+          </div>
 
           <div className="panel">
             <h2>Board</h2>

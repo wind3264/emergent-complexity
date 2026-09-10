@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   Grid,
+  applyNoise,
   countsOf,
   createGrid,
   hashGrid,
@@ -239,5 +240,42 @@ describe("grid helpers", () => {
     const c = gridFrom([".##", "...", "..."]);
     expect(hashGrid(a)).toBe(hashGrid(b));
     expect(hashGrid(a)).not.toBe(hashGrid(c));
+  });
+});
+
+describe("noise", () => {
+  /** Deterministic generator so the flip counts below are exact, not flaky. */
+  function lcg(seed: number) {
+    return () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+  }
+
+  it("does nothing at rate 0 and flips everything at rate 1", () => {
+    const quiet = gridFrom(["##.", "...", "..#"]);
+    expect(applyNoise(quiet, 0)).toEqual([]);
+    expect(gridTo(quiet)).toEqual(["##.", "...", "..#"]);
+
+    const all = gridFrom(["##.", "...", "..#"]);
+    expect(applyNoise(all, 1)).toHaveLength(9);
+    expect(gridTo(all)).toEqual(["..#", "###", "##."]);
+  });
+
+  it("flips about p*N cells and reports each one exactly once", () => {
+    const grid = createGrid(200, 200);
+    const flipped = applyNoise(grid, 0.01, lcg(7));
+    expect(flipped.length).toBeGreaterThan(320);
+    expect(flipped.length).toBeLessThan(480);
+    expect(new Set(flipped).size).toBe(flipped.length);
+    expect([...flipped].sort((a, b) => a - b)).toEqual(flipped);
+    expect(populationOf(grid)).toBe(flipped.length);
+  });
+
+  it("turns live cells off as readily as dead cells on", () => {
+    const grid = createGrid(200, 200);
+    grid.cells.fill(1);
+    const flipped = applyNoise(grid, 0.01, lcg(11));
+    expect(populationOf(grid)).toBe(40000 - flipped.length);
   });
 });
